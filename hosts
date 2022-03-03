@@ -1,13 +1,13 @@
 # These are your kafka cluster nodes
 [kafka_servers]
-10.113.72.196 kafka_broker_id=1
-10.113.76.54 kafka_broker_id=2
-10.113.78.223 kafka_broker_id=3
-10.113.78.236 kafka_broker_id=4
+kafka_node1 kafka_broker_id=1
+kafka_node2 kafka_broker_id=2
+kafka_node3 kafka_broker_id=3
+kafka_node4 kafka_broker_id=4
 #
 # These are your zookeeper cluster nodes
 [zk_servers]
-10.113.72.196 zk_id=1
-10.113.76.54 zk_id=2
-10.113.78.223 zk_id=3
-10.113.78.236 zk_id=4
+zookeeper1 zk_id=1
+zookeeper2 zk_id=2
+zookeeper3 zk_id=3
+zookeeper4 zk_id=4
