@@ -1,14 +1,19 @@
 [Unit]
-Description=Zookeeper
-Before=
+Description=Apache Zookeeper
+Documentation=http://zookeeper.apache.org
+Requires=network.target
 After=network.target
 
 [Service]
 Type=forking
-User=zookeeper
-Environment=ZOO_LOG_DIR={{ zookeeper.configuration.log_path }} JAVA_HOME=/usr/bin/java CHDIR={{ zookeeper.configuration.data_dir }}
-ExecStart={{ zk_application_path }}/bin/zkServer.sh start
-Restart=on-abort
+EnvironmentFile=/etc/default/zookeeper
+ExecStart={{ zookeeper_dir }}/bin/zkServer.sh start
+ExecStop={{ zookeeper_dir }}/bin/zkServer.sh stop
+SuccessExitStatus=143
+Restart=on-failure
+User={{ zookeeper_user }}
+Group={{ zookeeper_group }}
 
 [Install]
 WantedBy=multi-user.target
+Alias=zookeeper.service

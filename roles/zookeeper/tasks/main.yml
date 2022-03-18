@@ -1,90 +1,209 @@
-- name: create zookeeper group 
-  group: name=zookeeper state=present
-  tags: 
-    - zookeeper 
-    - zk_setup
- 
-- name: create zookeeper user
-  user: name=zookeeper group=zookeeper
-  tags: 
-    - zookeeper 
-    - zk_setup
-  
-- set_fact:
-    zk_package_name: zookeeper-{{ zookeeper.version }}.tar.gz
-    zk_application_path: "{{ zookeeper.installation_path }}/zookeeper-{{ zookeeper.version }}"
-  tags: 
-    - zookeeper 
-    - zk_installation
-
-- name: check zookeeper package
-  stat: path={{ package_download_path }}/{{ zk_package_name }}
-  register: zk_package_exists
+---
+- name: Load OS-specific variables
+  include_vars: "{{ item }}"
+  with_first_found:
+    - ../vars/{{ ansible_os_family }}.yml
+    - ../vars/{{ ansible_distribution_release }}.yml
+    - ../vars/empty.yml
   tags:
-    - zookeeper
-    - zk_installation
+    - always
 
-- name: download zookeeper tar if not downloaded
-  get_url: url={{ zookeeper.download_mirror }}/zookeeper-{{ zookeeper.version }}/{{ zk_package_name }} dest={{ package_download_path }}
-  when: not zk_package_exists.stat.exists 
-  tags: 
-    - zookeeper
-    - zk_installation
-
-- name: unarchive zookeeper package
-  unarchive: src={{ package_download_path }}/{{ zk_package_name }} dest={{ zookeeper.installation_path }} copy=no 
-  tags: 
-    - zookeeper
-    - zk_installation
-
-- name: delete package downloaded if needed
-  file: path={{ package_download_path }}/{{ zk_package_name }} state=absent
-  when: force_cleanup is defined and force_cleanup == "True"
+- name: Create zookeeper group
+  group:
+    name: "{{ zookeeper_group }}"
+    state: present
+    system: yes
+  when: zookeeper_create_user_group | bool
   tags:
-    - zookeeper
-    - zk_installation
+    - zookeeper_group
 
-- name: set zookeeper data dir
-  file: path={{ zookeeper.configuration.data_dir }} state=directory owner=zookeeper group=zookeeper
-  tags: 
-    - zookeeper
-    - zk_configuration
-
-- name: set zookeeper log dir
-  file: path={{ zookeeper.configuration.log_path }} state=directory owner=zookeeper group=zookeeper
+- name: Create zookeeper user
+  user:
+    name: "{{ zookeeper_user }}"
+    group: "{{ zookeeper_group }}"
+    state: present
+    createhome: no
+    system: yes
+  when: zookeeper_create_user_group | bool
   tags:
-    - zookeeper
-    - zk_configuration
+    - zookeeper_user
 
-- name: set zookeeper configuration
-  template: src=templates/zookeeper.configuration.j2 dest={{ zk_application_path }}/conf/zoo.cfg force=yes
-  notify: restart zookeeper
-  tags: 
-    - zookeeper
-    - zk_configuration
+- name: Check if ZooKeeper has already been downloaded and unpacked
+  stat:
+    path: "{{ zookeeper_install_dir }}"
+  register: dir
 
-- name: set zookeeper data dir
-  file: path={{ zookeeper.configuration.data_dir }} state=directory owner=zookeeper group=zookeeper
-  tags: 
-    - zookeeper
-    - zk_configuration
-
-- name: set zookeeper myid configuration
-  template: src=templates/zookeeper.myid.j2 dest={{ zookeeper.configuration.data_dir }}/myid force=yes
-  notify: restart zookeeper
-  tags: 
-    - zookeeper
-    - zk_configuration
-
-- name: start zookeeper
-  template: src=zookeeper.systemd.j2 dest=/etc/systemd/system/zookeeper.service owner=root group=root mode=644 force=yes
+- name: Download Apache ZooKeeper
+  get_url:
+    url: "{{ zookeeper_mirror }}/zookeeper-{{ zookeeper_version }}/{{ zookeeper_package }}"
+    dest: /tmp
+  when: not dir.stat.exists
   tags:
-    - zookeeper
-    - zk_startup
+    - zookeeper_download
 
-- name: reload systemd daemon 
-  shell: "systemctl daemon-reload"
-  notify: restart zookeeper
+- name: Create ZooKeeper installation dir {{ zookeeper_install_dir }}
+  file:
+    path: "{{ zookeeper_install_dir }}"
+    state: directory
+    group: "{{ zookeeper_group }}"
+    owner: "{{ zookeeper_user }}"
+    mode: 0755
+  when: not dir.stat.exists
   tags:
-    - zookeeper
-    - zk_startup
+    - zookeeper_dirs
+
+- name: Unpack Apache ZooKeeper
+  unarchive:
+    src: /tmp/{{ zookeeper_package }}
+    dest: "{{ zookeeper_install_dir }}"
+    copy: no
+    extra_opts: [--strip-components=1]
+    group: "{{ zookeeper_group }}"
+    owner: "{{ zookeeper_user }}"
+  when: not dir.stat.exists
+  tags:
+    - zookeeper_unpack
+
+- name: Create symlink to ZooKeeper installation
+  file:
+    src: "{{ zookeeper_install_dir }}"
+    dest: "{{ zookeeper_dir }}"
+    state: link
+    group: "{{ zookeeper_group }}"
+    owner: "{{ zookeeper_user }}"
+  tags:
+    - zookeeper_dirs
+
+- name: Create directory for snapshot files and myid file
+  file:
+    path: "{{ zookeeper_data_dir }}"
+    state: directory
+    group: "{{ zookeeper_group }}"
+    owner: "{{ zookeeper_user }}"
+    mode: 0755
+  tags:
+    - zookeeper_dirs
+
+- name: Create directory for transaction log files
+  file:
+    path: "{{ zookeeper_data_log_dir }}"
+    state: directory
+    group: "{{ zookeeper_group }}"
+    owner: "{{ zookeeper_user }}"
+    mode: 0755
+  tags:
+    - zookeeper_dirs
+
+- name: Create zookeeper log directory
+  file:
+    path: "{{ zookeeper_log_dir }}"
+    state: directory
+    group: "{{ zookeeper_group }}"
+    owner: "{{ zookeeper_user }}"
+    mode: 0755
+  tags:
+    - zookeeper_dirs
+
+# /usr/share/zookeeper/conf/zoo.cfg is the default file ZooKeeper will use when starting
+- name: Template configuration file to zoo.cfg
+  template:
+    src: zookeeper.configuration.j2
+    dest: "{{ zookeeper_dir }}/conf/zoo.cfg"
+    group: "{{ zookeeper_group }}"
+    owner: "{{ zookeeper_user }}"
+    mode: 0644
+  notify:
+    - Restart ZooKeeper service
+  tags:
+    - zookeeper_config
+
+- name: Create directory for symlink to ZooKeeper configuration file
+  file:
+    path: /etc/zookeeper
+    state: directory
+    group: "{{ zookeeper_group }}"
+    owner: "{{ zookeeper_user }}"
+    mode: 0755
+  tags:
+    - zookeeper_config
+
+- name: Create symlink to ZooKeeper configuration file
+  file:
+    src: "{{ zookeeper_dir }}/conf/zoo.cfg"
+    dest: /etc/zookeeper/zoo.cfg
+    state: link
+    group: "{{ zookeeper_group }}"
+    owner: "{{ zookeeper_user }}"
+  tags:
+    - zookeeper_config
+
+- name: Template myid to {{ zookeeper_data_dir }}/myid
+  template:
+    src: zookeeper.myid.j2
+    dest: "{{ zookeeper_data_dir }}/myid"
+    group: "{{ zookeeper_group }}"
+    owner: "{{ zookeeper_user }}"
+    mode: 0644
+  notify:
+    - Restart ZooKeeper service
+  tags:
+    - zookeeper_config
+
+- name: Template /etc/default
+  template:
+    src: default.j2
+    dest: "/etc/default/zookeeper"
+    group: "{{ zookeeper_group }}"
+    owner: "{{ zookeeper_user }}"
+    mode: 0644
+  notify:
+    - Restart ZooKeeper service
+  tags:
+    - zookeeper_config
+
+# Uncomment the log4j.properties line for setting the maximum number of logs to rollover and keep
+- name: Set maximum log rollover history
+  replace:
+    dest: "{{ zookeeper_dir }}/conf/log4j.properties"
+    regexp: "^#log4j.appender.ROLLINGFILE.MaxBackupIndex"
+    replace: "log4j.appender.ROLLINGFILE.MaxBackupIndex"
+  notify:
+    - Restart ZooKeeper service
+  tags:
+    - zookeeper_config
+
+- name: Template ZooKeeper systemd service file
+  template:
+    src: zookeeper.systemd.j2
+    dest: "{{ zookeeper_unit_path }}"
+    group: "{{ zookeeper_group }}"
+    owner: "{{ zookeeper_user }}"
+    mode: 0644
+  tags:
+    - zookeeper_service
+
+- name: Start the ZooKeeper service
+  systemd:
+    name: zookeeper.service
+    state: started
+    enabled: yes
+  when: zookeeper_start
+  tags:
+    - zookeeper_service
+
+# Cleanup install by deleting downloaded ZooKeeper archive
+- name: Delete /tmp/{{ zookeeper_package }} file
+  file:
+    path: /tmp/{{ zookeeper_package }}
+    state: absent
+  tags:
+    - zookeeper_cleanup
+
+# Set Ansible fact that ZooKeeper has completed installation. This is so that this role can be used in
+# other dependent roles. Those roles can check for this fact to determine whether or not this role
+# should be run. Failing to do so will mean that this role is executed even if it has already been run.
+- name: Set fact zookeeper_installed
+  set_fact:
+    zookeeper_installed: true
+  tags:
+    - zookeeper_install_fact
